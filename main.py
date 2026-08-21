@@ -13,7 +13,12 @@ import sqlalchemy
 DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./waitlist.db")
 ADMIN_KEY = os.getenv("ADMIN_KEY", "osogbo-admin-2024")
 
-database = databases.Database(DATABASE_URL)
+# For databases library, ensure the URL uses the right scheme
+db_url = DATABASE_URL
+if db_url.startswith("postgres://"):
+    db_url = db_url.replace("postgres://", "postgresql://", 1)
+
+database = databases.Database(db_url)
 metadata = sqlalchemy.MetaData()
 
 waitlist_table = sqlalchemy.Table(
@@ -28,7 +33,10 @@ waitlist_table = sqlalchemy.Table(
     sqlalchemy.Column("created_at", sqlalchemy.DateTime, nullable=False),
 )
 
-engine = sqlalchemy.create_engine(DATABASE_URL.replace("sqlite:///", "sqlite:///"))
+# Create tables using the databases backend engine
+import sqlalchemy as sa
+sync_url = db_url.replace("postgresql://", "postgresql+psycopg2://", 1) if "postgresql" in db_url else db_url
+engine = sa.create_engine(sync_url)
 metadata.create_all(engine)
 
 app = FastAPI(title="Osogbo Live API")
