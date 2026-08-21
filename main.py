@@ -1,6 +1,7 @@
 import os
 import csv
 import io
+from urllib.parse import urlparse, quote
 from datetime import datetime, timezone, timedelta
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
@@ -13,10 +14,22 @@ import sqlalchemy
 DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./waitlist.db")
 ADMIN_KEY = os.getenv("ADMIN_KEY", "osogbo-admin-2024")
 
-# For databases library, ensure the URL uses the right scheme
-db_url = DATABASE_URL
-if db_url.startswith("postgres://"):
-    db_url = db_url.replace("postgres://", "postgresql://", 1)
+def normalize_db_url(url: str) -> str:
+    if url.startswith("postgres://"):
+        url = url.replace("postgres://", "postgresql://", 1)
+    parsed = urlparse(url)
+    if parsed.password:
+        user = parsed.username or ""
+        encoded_password = quote(parsed.password, safe="")
+        netloc = f"{user}:{encoded_password}@{parsed.hostname}"
+        if parsed.port:
+            netloc += f":{parsed.port}"
+        url = f"{parsed.scheme}://{netloc}{parsed.path}"
+        if parsed.query:
+            url += f"?{parsed.query}"
+    return url
+
+db_url = normalize_db_url(DATABASE_URL)
 
 database = databases.Database(db_url)
 metadata = sqlalchemy.MetaData()
@@ -35,7 +48,7 @@ waitlist_table = sqlalchemy.Table(
 
 # Create tables using the databases backend engine
 import sqlalchemy as sa
-sync_url = db_url.replace("postgresql://", "postgresql+psycopg2://", 1) if "postgresql" in db_url else db_url
+sync_url = db_url
 engine = sa.create_engine(sync_url)
 metadata.create_all(engine)
 
