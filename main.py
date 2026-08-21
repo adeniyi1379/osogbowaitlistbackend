@@ -1,7 +1,6 @@
 import os
 import csv
 import io
-from urllib.parse import urlparse, quote
 from datetime import datetime, timezone, timedelta
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
@@ -17,17 +16,44 @@ ADMIN_KEY = os.getenv("ADMIN_KEY", "osogbo-admin-2024")
 def normalize_db_url(url: str) -> str:
     if url.startswith("postgres://"):
         url = url.replace("postgres://", "postgresql://", 1)
-    parsed = urlparse(url)
-    if parsed.password:
-        user = parsed.username or ""
-        encoded_password = quote(parsed.password, safe="")
-        netloc = f"{user}:{encoded_password}@{parsed.hostname}"
-        if parsed.port:
-            netloc += f":{parsed.port}"
-        url = f"{parsed.scheme}://{netloc}{parsed.path}"
-        if parsed.query:
-            url += f"?{parsed.query}"
-    return url
+
+    if url.startswith("sqlite"):
+        return url
+
+    # Manually parse to avoid Python 3.14 strict urlparse issues with special chars
+    # Format: scheme://user:password@host:port/dbname?params
+    scheme_end = url.find("://")
+    scheme = url[:scheme_end]
+    rest = url[scheme_end + 3:]
+
+    at_idx = rest.rfind("@")
+    netloc = rest[:at_idx]
+    path_query = rest[at_idx + 1:]
+
+    colon_idx = netloc.rfind(":")
+    if colon_idx > 0 and colon_idx > netloc.rfind("]"):
+        host = netloc[:colon_idx]
+        port = netloc[colon_idx + 1:]
+    else:
+        host = netloc
+        port = None
+
+    # Strip brackets from host (IPv6-style brackets that confuse parsers)
+    if host.startswith("[") and host.endswith("]"):
+        host = host[1:-1]
+
+    # Re-encode password but keep user:pass@ intact
+    user_pass = netloc[:netloc.rfind("@")] if "@" in netloc else None
+    if user_pass and ":" in user_pass:
+        user, password = user_pass.split(":", 1)
+        from urllib.parse import quote
+        user_pass = f"{user}:{quote(password, safe='')}"
+
+    new_netloc = f"{user_pass}@{host}" if user_pass else host
+    if port:
+        new_netloc += f":{port}"
+
+    return f"{scheme}://{new_netloc}{path_query}"
 
 db_url = normalize_db_url(DATABASE_URL)
 
@@ -48,8 +74,7 @@ waitlist_table = sqlalchemy.Table(
 
 # Create tables using the databases backend engine
 import sqlalchemy as sa
-sync_url = db_url
-engine = sa.create_engine(sync_url)
+engine = sa.create_engine(db_url)
 metadata.create_all(engine)
 
 app = FastAPI(title="Osogbo Live API")
